@@ -1,69 +1,13 @@
 //SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/utils/Counters.sol";
-
-/// Qrate Main Contract
+ 
 contract Qrate {
     using Counters for Counters.Counter;
-
+    address public chairperson;
     Counters.Counter public totalQuestions;
 
-    address public chairperson;
-    enum QuestionStatus {
-        PENDING,
-        ACCEPTED,
-        REJECTED
-    }
-
-    event Question(QuestionStruct question);
-    event Moderator(address moderatorAddress, string subject, bool approved);
-
-    struct QuestionStruct {
-        uint256 mainId;
-        uint256 id;
-        string question_string;
-        string subject;
-        string topic;
-        string subTopic;
-        uint256 upvotes;
-        uint256 downvotes;
-        address applicant;
-        QuestionStatus status;
-        uint256 incentives;
-    }
-
-    mapping(string => mapping(address => bool)) public moderators; // subject -> moderator_address -> approved
-    mapping(string => uint256) public moderatorCount; // subject -> count
-    mapping(string => QuestionStruct[]) public questions; // subject -> questions[]
-    mapping(string => mapping(uint256 => address[])) public questionVoters; // question_id -> moderators_who_have_voted[]
-
-    function getQuestionVoters(string memory _subject, uint256 _id)
-        public
-        view
-        returns (address[] memory)
-    {
-        return questionVoters[_subject][_id];
-    }
-
-    mapping(string => mapping(uint256 => mapping(address => bool)))
-        public questionVoted; // question_id -> moderator_address -> vote_status(weather_voted_or_not)
-    mapping(string => uint256) public threshold; // subject -> min_number_of_votes
-    mapping(string => uint256) public minVotes;
-
-    mapping(string => mapping(uint256 => bool)) public questionToCheck; // subject -> question_id -> to_check_or_not
-    mapping(string => uint256[]) public questionIdsToCheck; // subject -> questions_to_check
-
-    function getQuestionIdsToCheck(string memory _subject)
-        public
-        view
-        returns (uint256[] memory)
-    {
-        return questionIdsToCheck[_subject];
-    }
-
-    mapping(string => Counters.Counter) private counters; // subject -> counter
-
-    constructor() {
+    constructor(){
         chairperson = msg.sender;
     }
 
@@ -74,131 +18,104 @@ contract Qrate {
         );
         _;
     }
-
-    /**
-     * Submit Application to become a moderator
-     * @param _subject subject to apply for
-     */
-    function applyAsModerator(string memory _subject) public {
-        moderators[_subject][msg.sender] = false;
-        emit Moderator(msg.sender, _subject, false);
+ 
+    enum QuestionStatus {
+        PENDING,
+        ACCEPTED,
+        REJECTED
+    }
+ 
+    struct ModeratorStruct{
+        string name;
+        string subject;
+        string proof;
+        bool approved;
     }
 
-    /**
-     * Approve Moderator to make them eligible to vote on questions
-     * ! only deployer can run this function
-     * @param _address moderator_address
-     * @param _subject subject to approve for
-     */
-    function approveModerator(address _address, string memory _subject)
-        public
-        onlyOwner
-    {
-        require(!moderators[_subject][_address], "Already A Moderator");
-        if (!moderators[_subject][_address]) {
-            moderators[_subject][_address] = true;
-            moderatorCount[_subject]++;
-            emit Moderator(_address, _subject, true);
-        }
+    struct QuestionStruct{
+        string questionString;
+        string subject;
+        string topic;
+        string subTopic;
+        uint256 upvotes;
+        uint256 downvotes;
+        address applicant;
+        QuestionStatus status;
     }
 
-    /**
-     * Add/Create Question for a specific subject
-     */
-    function addQuestion(
-        string memory _question_string,
-        string memory _subject,
-        string memory _topic,
-        string memory _subTopic
-    ) public {
-        QuestionStruct memory q = QuestionStruct({
-            mainId: totalQuestions.current(),
-            id: counters[_subject].current(),
-            question_string: _question_string,
-            subject: _subject,
-            topic: _topic,
-            subTopic: _subTopic,
-            upvotes: 0,
-            downvotes: 0,
-            applicant: msg.sender,
-            status: QuestionStatus.PENDING,
-            incentives: 0
-        });
-        questions[_subject].push(q);
-        emit Question(q);
-        counters[_subject].increment();
+    mapping(address=>ModeratorStruct) public moderators;
+    mapping(uint256 => QuestionStruct) public questions;
+    mapping(address => mapping(uint256=>bool)) public questionVoters;
+    mapping(string => uint256) public threshold;
+    mapping(string => uint256) public minVotes;
+
+    event Moderator(address indexed moderatorAddress, ModeratorStruct moderator);
+    event Question(uint256 indexed quesId, address sender, QuestionStruct question);
+    event Subject(string subject);
+
+    function setThresholdAndMinVotes(string memory _subject, uint256 _threshold, uint256 _minVotes) public onlyOwner{
+        require(bytes(_subject).length > 0, "Subject cannot be empty");
+        require(_threshold > 0, "Threshold cannot be 0");
+        require(_minVotes > 0, "Minimum votes cannot be 0");
+        threshold[_subject] = _threshold; 
+        minVotes[_subject] = _minVotes;
+        emit Subject(_subject);
+    }
+
+    function getThresholdAndMinVotes(string memory _subject) internal view returns(uint256, uint256){
+        return (threshold[_subject], minVotes[_subject]);
+    }
+
+    function addQuestion(string memory _questionString, string memory _subject, string memory _topic, string memory _subTopic) public{
+        require(bytes(_questionString).length > 0, "Question cannot be empty");
+        require(bytes(_subTopic).length > 0, "Sub Topic cannot be empty");
+        require(bytes(_subject).length > 0, "Subject cannot be empty");
+        QuestionStruct storage q = questions[totalQuestions.current()];
+        q.questionString = _questionString;
+        q.subject = _subject;
+        q.topic = _topic;
+        q.subTopic = _subTopic;
+        q.applicant = msg.sender;
+        q.status = QuestionStatus.PENDING;  
+        emit Question(totalQuestions.current(), address(0), q);
         totalQuestions.increment();
     }
 
-    function getQuestions(string memory _subject)
-        public
-        view
-        returns (QuestionStruct[] memory)
-    {
-        return questions[_subject];
-    }
-
-    function updateQuestion(
-        uint256 _id,
-        string memory _subject,
-        bool _vote
-    ) public {
-        require(
-            moderators[_subject][msg.sender],
-            "Not an authorized moderator"
-        );
-        require(!questionVoted[_subject][_id][msg.sender], "Already Voted");
-        QuestionStruct storage q = questions[_subject][_id];
-        if (_vote) q.upvotes = q.upvotes + 1;
-        else q.downvotes = q.downvotes + 1;
-        questionVoted[_subject][_id][msg.sender] = true;
-        questionVoters[_subject][_id].push(msg.sender);
-        emit Question(q);
-        if (!questionToCheck[_subject][_id]) {
-            questionToCheck[_subject][_id] = true;
-            questionIdsToCheck[_subject].push(_id);
-        }
-    }
-
-    function setThreshold(string memory _subject, uint256 _threshold)
-        public
-        onlyOwner
-    {
-        threshold[_subject] = _threshold;
-    }
-
-    function setMinVotes(string memory _subject, uint256 _minVotes)
-        public
-        onlyOwner
-    {
-        minVotes[_subject] = _minVotes;
-    }
-
-    function checkApproval(uint256 _id, string memory _subject) internal {
-        QuestionStruct storage q = questions[_subject][_id];
-        uint256 minimum_needed_votes = minVotes[_subject];
-        // check weather total votes are
-        if ((q.upvotes + q.downvotes) < minimum_needed_votes) {
-            return;
-        }
-        if (q.upvotes > threshold[_subject]) q.status = QuestionStatus.ACCEPTED;
-        else if (q.downvotes > threshold[_subject])
+    function updateQuestion(uint256 _id, bool _vote) public{
+        ModeratorStruct memory m = moderators[msg.sender];
+        QuestionStruct storage q = questions[_id];
+        require(m.approved, "Not a chairperson approved moderator.");
+        require((keccak256(bytes(m.subject)) == keccak256(bytes(q.subject))), "Not a moderator for the required subject");
+        require(!questionVoters[msg.sender][_id], "Already Voted!");
+        questionVoters[msg.sender][_id] = true;
+        if(_vote)
+            q.upvotes++;
+        else
+            q.downvotes++;
+        (uint256 th, uint256 mv) = getThresholdAndMinVotes(q.subject);
+        if(q.upvotes >= th && q.upvotes+q.downvotes >= mv)
+            q.status = QuestionStatus.ACCEPTED;
+        else if(q.downvotes >= th && q.upvotes+q.downvotes >= mv)
             q.status = QuestionStatus.REJECTED;
+        emit Question(_id, msg.sender, q);
     }
 
-    function changeQuestionStatus(string memory _subject) public {
-        require(minVotes[_subject] > 0, "No Minimum Number of Votes Set.");
-        for (uint256 i = 0; i < questionIdsToCheck[_subject].length; i++) {
-            uint256 questionId = questionIdsToCheck[_subject][i]; // question ID to check
-            checkApproval(questionId, _subject); // approve if okay else no
-            questionToCheck[_subject][questionId] = false; // dont check next time
-        }
-        delete questionIdsToCheck[_subject];
+    function applyAsModerator(string memory _name, string memory _subject, string memory _proof) public {
+        require(bytes(_name).length > 0, "Question cannot be empty");
+        require(bytes(_subject).length > 0, "Subject cannot be empty");
+        ModeratorStruct storage m = moderators[msg.sender];
+        m.name = _name;
+        m.subject = _subject;
+        m.proof = _proof;
+        m.approved = false;
+        emit Moderator(msg.sender, m);
     }
 
-    fallback() external {}
-
-    receive() external payable {
-        //emit AmountCredit(msg.sender, msg.value);
+    function changeModeratorStatus(address _moderator) public onlyOwner{
+        require(_moderator != address(0), "Moderator address cannot be empty");
+        ModeratorStruct storage m = moderators[_moderator];
+        require((keccak256(bytes(m.subject)) != keccak256(bytes(""))),"Not applied as a moderator");
+        m.approved = !m.approved;
+        emit Moderator(_moderator, m);
     }
 }
